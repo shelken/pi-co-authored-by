@@ -11,7 +11,7 @@ Co-Authored-By: Claude Sonnet 4 <noreply@pi.dev>
 
 **Generated-By trailer** — Records which version of Pi was used:
 ```
-Generated-By: pi 0.52.12
+Generated-By: pi 0.63.2
 ```
 
 **Example commit:**
@@ -19,7 +19,7 @@ Generated-By: pi 0.52.12
 fix: resolve null pointer
 
 Co-Authored-By: Claude Sonnet 4 <noreply@pi.dev>
-Generated-By: pi 0.52.12
+Generated-By: pi 0.63.2
 ```
 
 ## Requirements
