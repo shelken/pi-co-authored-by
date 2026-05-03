@@ -57,6 +57,18 @@ describe("isGitCommit", () => {
 	it("detects git commit with -S (signed) and -m", () => {
 		expect(isGitCommit('git commit -S -m "signed commit"')).toBe(true);
 	});
+
+	it("detects git commit in a compound && chain", () => {
+		expect(
+			isGitCommit(
+				'git status --short && git add . && git commit -m "fix" && git push',
+			),
+		).toBe(true);
+	});
+
+	it("detects git commit at end of pipe chain", () => {
+		expect(isGitCommit('echo msg | git commit -F - -m "fix"')).toBe(true);
+	});
 });
 
 describe("appendTrailers", () => {
@@ -116,5 +128,56 @@ describe("appendTrailers", () => {
 			"0.50.0",
 		);
 		expect(result).toContain("Co-Authored-By: openai/gpt-4o <noreply@pi.dev>");
+	});
+
+	it("only modifies the git commit segment in a && chain", () => {
+		const result = appendTrailers(
+			'git status -s && git add -A && git commit -m "fix" && git push',
+			"Claude Sonnet 4",
+			"0.52.12",
+		);
+		// git status and git add should be untouched
+		expect(result.startsWith('git status -s && git add -A &&')).toBe(true);
+		// commit segment should have trailers
+		expect(result).toContain('git commit -m "fix" -m "" -m $\'Co-Authored-By:');
+		// git push should be untouched
+		expect(result.endsWith("&& git push")).toBe(true);
+	});
+
+	it("handles compound command with && on both sides of commit", () => {
+		// This is the exact pattern from the bug report
+		const cmd =
+			'git status --short && git add AGENTS.md && git diff --cached --name-status && git commit -m "Require live Plannotator step completion markers" && git -c alias.status= status --short';
+		const result = appendTrailers(cmd, "Gemini 2.5 Pro", "1.0.0");
+		// The trailing git status should NOT have -m args
+		expect(result.endsWith(
+			"&& git -c alias.status= status --short",
+		)).toBe(true);
+		// The commit segment should have trailers
+		expect(result).toContain(
+			'git commit -m "Require live Plannotator step completion markers" -m "" -m',
+		);
+	});
+
+	it("handles || separator", () => {
+		const result = appendTrailers(
+			'git commit -m "msg" || echo "failed"',
+			"Model",
+			"1.0.0",
+		);
+		expect(result.startsWith('git commit -m "msg" -m "" -m')).toBe(true);
+		expect(result.endsWith("|| echo \"failed\"")).toBe(true);
+	});
+
+	it("respects quotes containing &&", () => {
+		const result = appendTrailers(
+			'git commit -m "fix && stuff"',
+			"Model",
+			"1.0.0",
+		);
+		// Should not split at && inside quotes
+		expect(result).toBe(
+			'git commit -m "fix && stuff" -m "" -m $\'Co-Authored-By: Model <noreply@pi.dev>\\nGenerated-By: pi 1.0.0\'',
+		);
 	});
 });
