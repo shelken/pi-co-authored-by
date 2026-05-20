@@ -1,6 +1,6 @@
 # pi-co-authored-by
 
-A [Pi](https://github.com/badlogic/pi) extension that automatically appends git trailers to commit messages when the agent runs `git commit`. Adds the model name and pi version so you always know which AI helped write the code.
+A [Pi](https://github.com/earendil-works/pi) extension that automatically appends git trailers to commit messages when the agent runs `git commit`. Adds the model name and pi version so you always know which AI helped write the code.
 
 ## Features
 
@@ -24,7 +24,7 @@ Generated-By: pi 0.63.2
 
 ## Requirements
 
-- [Pi](https://github.com/badlogic/pi) coding agent
+- [Pi](https://github.com/earendil-works/pi) coding agent v0.74.1 or newer
 
 ## Install
 
