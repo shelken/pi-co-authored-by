@@ -1,86 +1,90 @@
 /**
- * Pure logic for detecting and rewriting git commit commands with trailers.
+ * Pure logic for detecting git commit commands and wrapping git with trailers.
  * Separated from the pi extension API for testability.
  */
 
-/** Check if a command is a `git commit` with a -m message flag. */
-export function isGitCommit(cmd: string): boolean {
+/** Check if a command may contain a direct `git commit` invocation. */
+export function containsGitCommit(cmd: string): boolean {
 	const normalized = cmd.replace(/\\\n/g, " ");
-	return /\bgit\s+commit\b/.test(normalized) && /\s-[^\s]*m\b/.test(normalized);
+	return /\bgit\b[\s\S]*\bcommit\b/.test(normalized);
 }
 
-interface Segment {
-	text: string;
-	/** Separator between this segment and the next. Empty for the last segment. */
-	sep: string;
+/** Build a bash command that appends trailers to direct `git commit` calls. */
+export function wrapGitWithTrailers(
+	cmd: string,
+	modelName: string,
+	piVersion: string,
+): string {
+	const coAuthor = `Co-Authored-By: ${modelName} <noreply@pi.dev>`;
+	const generatedBy = `Generated-By: pi ${piVersion}`;
+
+	return `${buildGitWrapper(coAuthor, generatedBy)}\n${cmd}`;
 }
 
-/**
- * Split a shell command into individual segments at &&, ||, ;, | boundaries.
- * Returns each segment with its following separator.
- * Respects single and double quotes to avoid splitting inside arguments.
- */
-function splitSegments(cmd: string): Segment[] {
-	const segments: Segment[] = [];
-	let current = "";
-	let inSingle = false;
-	let inDouble = false;
-	let i = 0;
-	while (i < cmd.length) {
-		const ch = cmd[i];
-		if (ch === "'" && !inDouble) inSingle = !inSingle;
-		else if (ch === '"' && !inSingle) inDouble = !inDouble;
-
-		if (!inSingle && !inDouble) {
-			// Check 2-char separators first
-			if (cmd.startsWith("&&", i) || cmd.startsWith("||", i)) {
-				segments.push({ text: current.trim(), sep: cmd.slice(i, i + 2) });
-				current = "";
-				i += 2;
-				continue;
-			}
-			if (ch === ";" || ch === "|") {
-				segments.push({ text: current.trim(), sep: ch });
-				current = "";
-				i++;
-				continue;
-			}
-		}
-		current += ch;
-		i++;
-	}
-	const text = current.trim();
-	if (text) segments.push({ text, sep: "" });
-	return segments;
+function shellQuote(value: string): string {
+	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-/** Build the rewritten command with Co-Authored-By and Generated-By trailers. */
-export function appendTrailers(cmd: string, modelName: string, piVersion: string): string {
-	const normalized = cmd.replace(/\\\n/g, " ");
-	const trailers = `Co-Authored-By: ${modelName} <noreply@pi.dev>\\nGenerated-By: pi ${piVersion}`;
-	const suffix = ` -m "" -m $'${trailers}'`;
+function buildGitWrapper(coAuthor: string, generatedBy: string): string {
+	return `git() (
+  set +u
+  local -a __pi_git_original=("$@")
+  local -a __pi_git_globals=()
 
-	// Find the git commit segment and append trailers only to it
-	const segments = splitSegments(normalized);
-	const commitIdx = segments.findIndex(
-		(s) => /\bgit\s+commit\b/.test(s.text) && /\s-[^\s]*m\b/.test(s.text),
-	);
-	if (commitIdx === -1) {
-		// Fallback: append at end (shouldn't happen since isGitCommit already checked)
-		return `${normalized.trimEnd()}${suffix}`;
-	}
+  while (($#)); do
+    case "$1" in
+      -c|-C|--config-env|--exec-path|--git-dir|--work-tree|--namespace)
+        __pi_git_globals+=("$1")
+        shift
+        if (($#)); then
+          __pi_git_globals+=("$1")
+          shift
+        fi
+        ;;
+      -c*|-C*|--config-env=*|--exec-path=*|--git-dir=*|--work-tree=*|--namespace=*)
+        __pi_git_globals+=("$1")
+        shift
+        ;;
+      --bare|--no-pager|--paginate|--no-replace-objects|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs|--no-optional-locks)
+        __pi_git_globals+=("$1")
+        shift
+        ;;
+      commit)
+        shift
+        local -a __pi_git_before_pathspec=()
+        local -a __pi_git_after_pathspec=()
+        local __pi_git_seen_pathspec=0
 
-	segments[commitIdx] = {
-		text: segments[commitIdx].text + suffix,
-		sep: segments[commitIdx].sep,
-	};
-	// Rebuild preserving original order and separators
-	let result = "";
-	for (let i = 0; i < segments.length; i++) {
-		result += segments[i].text;
-		if (segments[i].sep) {
-			result += ` ${segments[i].sep} `;
-		}
-	}
-	return result.trim();
+        while (($#)); do
+          if [[ "$1" == "--" && "$__pi_git_seen_pathspec" == 0 ]]; then
+            __pi_git_seen_pathspec=1
+            __pi_git_after_pathspec+=("$1")
+          elif [[ "$__pi_git_seen_pathspec" == 0 ]]; then
+            __pi_git_before_pathspec+=("$1")
+          else
+            __pi_git_after_pathspec+=("$1")
+          fi
+          shift
+        done
+
+        command git \
+          "\${__pi_git_globals[@]}" \
+          -c trailer.co-authored-by.ifExists=addIfDifferent \
+          -c trailer.generated-by.ifExists=replace \
+          commit \
+          "\${__pi_git_before_pathspec[@]}" \
+          --trailer ${shellQuote(coAuthor)} \
+          --trailer ${shellQuote(generatedBy)} \
+          "\${__pi_git_after_pathspec[@]}"
+        return
+        ;;
+      *)
+        command git "\${__pi_git_original[@]}"
+        return
+        ;;
+    esac
+  done
+
+  command git "\${__pi_git_original[@]}"
+)`;
 }
