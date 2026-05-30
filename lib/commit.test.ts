@@ -57,6 +57,28 @@ describe("containsGitCommit", () => {
 });
 
 describe("wrapGitWithTrailers", () => {
+	it("generates a wrapper without fragile case terminators", () => {
+		const wrapped = wrapGitWithTrailers("git commit -m subject", MODEL_NAME, PI_VERSION);
+
+		expect(wrapped).not.toContain(";;");
+		expect(wrapped).not.toMatch(/^\s*case\b/m);
+	});
+
+	it("passes through non-commit git commands before a commit", () => {
+		const output = runInGitRepo(`
+git --version
+echo one > a.txt
+git add a.txt
+git commit -q -m 'subject after passthrough'
+git log -1 --format=%B
+`);
+
+		expect(output).toContain("git version");
+		expect(output).toContain("subject after passthrough");
+		expect(output).toContain(CO_AUTHOR);
+		expect(output).toContain(GENERATED_BY);
+	});
+
 	it("appends trailers to a simple commit and passes through later git commands", () => {
 		const output = runInGitRepo(`
 echo one > a.txt
@@ -127,6 +149,19 @@ git status --short
 		expect(output).toContain(GENERATED_BY);
 		expect(output).toContain("only.txt");
 		expect(output).toContain("M  base.txt");
+	});
+
+	it("leaves explicit command git invocations untouched", () => {
+		const output = runInGitRepo(`
+echo one > a.txt
+command git add a.txt
+command git commit -q -m 'explicit subject'
+command git log -1 --format=%B
+`);
+
+		expect(output).toContain("explicit subject");
+		expect(output).not.toContain(CO_AUTHOR);
+		expect(output).not.toContain(GENERATED_BY);
 	});
 
 	it("handles git global options before the commit subcommand", () => {
